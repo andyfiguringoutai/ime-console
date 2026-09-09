@@ -1,0 +1,27 @@
+{
+  "name": "ime-network",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node db/migrate.mjs && node src/server.mjs",
+    "seed": "node db/seed.mjs --fresh",
+    "test": "node test/api.test.mjs && node test/contacts.test.mjs && node test/org.test.mjs && node test/auth.test.mjs && node test/ui.test.mjs",
+    "migrate": "node db/migrate.mjs",
+    "import": "node db/import.mjs",
+    "build": "esbuild src/main.jsx --bundle --minify --format=iife --define:process.env.NODE_ENV='\"production\"' --outfile=public/app.js",
+    "create-admin": "node db/create-admin.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^11.0.0",
+    "d3": "^7.9.0",
+    "esbuild": "^0.28.2",
+    "express": "^4.19.0",
+    "multer": "^2.2.0",
+    "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

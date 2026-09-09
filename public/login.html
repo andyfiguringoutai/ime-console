@@ -1,0 +1,44 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>IME Coverage Console — sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  :root{--ink:#10201F;--muted:#6B7A78;--rule:#D8DEDC;--ground:#F2F4F3;--ink2:#10201F;--none:#B3261E}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);font-family:'IBM Plex Sans',system-ui,sans-serif;color:var(--ink);
+    display:flex;align-items:center;justify-content:center;min-height:100vh}
+  .card{background:#fff;border:1px solid var(--rule);padding:34px 32px;width:340px}
+  .kicker{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  h1{font-family:'IBM Plex Sans Condensed',sans-serif;font-size:26px;font-weight:600;margin:6px 0 22px}
+  label{display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 4px}
+  input{width:100%;padding:9px 10px;border:1px solid var(--rule);font-size:14px;font-family:inherit;margin-bottom:14px;border-radius:0}
+  input:focus{outline:2px solid #5B4B8A;outline-offset:1px}
+  button{width:100%;padding:10px;background:var(--ink);color:#fff;border:none;font-size:14px;cursor:pointer;font-family:inherit}
+  button:disabled{opacity:.5}
+  .err{color:var(--none);font-size:12.5px;margin-bottom:12px;min-height:16px}
+  .note{font-size:11px;color:var(--muted);margin-top:16px;line-height:1.5}
+</style></head><body>
+<form class="card" id="f">
+  <div class="kicker">California IME network</div>
+  <h1>Sign in</h1>
+  <div class="err" id="err"></div>
+  <label for="email">Email</label>
+  <input id="email" type="email" autocomplete="username" required/>
+  <label for="pw">Password</label>
+  <input id="pw" type="password" autocomplete="current-password" required/>
+  <button type="submit" id="btn">Sign in</button>
+  <div class="note">Internal tool. Access is by account only — ask your administrator to add you.</div>
+</form>
+<script>
+const f=document.getElementById('f'),err=document.getElementById('err'),btn=document.getElementById('btn');
+f.addEventListener('submit',async(e)=>{
+  e.preventDefault(); err.textContent=''; btn.disabled=true; btn.textContent='Signing in…';
+  try{
+    const r=await fetch('/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({email:email.value.trim(),password:pw.value})});
+    if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.error||'Sign in failed.');}
+    location.href='/';
+  }catch(ex){err.textContent=ex.message;btn.disabled=false;btn.textContent='Sign in';}
+});
+</script></body></html>

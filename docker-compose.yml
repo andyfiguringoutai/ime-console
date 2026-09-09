@@ -1,0 +1,12 @@
+services:
+  ime:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ime-data:/app/data          # database + uploaded documents persist here
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+volumes:
+  ime-data:
