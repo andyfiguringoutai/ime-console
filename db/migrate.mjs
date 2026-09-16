@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
 const __dir = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = () => process.env.DB_PATH || path.join(__dir, '..', 'data', 'ime-network.db');
+const dbPath = () => process.env.DB_PATH || path.join(__dir, '..', 'storage', 'ime-network.db');
 
 /** Applies every unapplied migration in db/migrations, in filename order. */
 export function migrate(db = null) {

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { db, audit } from '../db.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const STORE = process.env.DOC_STORE || path.join(ROOT, 'data', 'documents');
+const STORE = process.env.DOC_STORE || path.join(ROOT, 'storage', 'documents');
 fs.mkdirSync(STORE, { recursive: true });
 
 // Disk storage keyed by physician. Swap for S3 later by replacing this block and

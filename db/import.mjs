@@ -27,7 +27,7 @@ import { normalizeValue, splitMulti, parsePhones, parseContactPeople, personKey,
 const nameKey = (n) => String(n).toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const dbPath = () => process.env.DB_PATH || path.join(ROOT, 'data', 'ime-network.db');
+const dbPath = () => process.env.DB_PATH || path.join(ROOT, 'storage', 'ime-network.db');
 
 // ---------------------------------------------------------------- gazetteer
 const CITY = (() => {

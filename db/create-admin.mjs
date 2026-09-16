@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
 import { migrate } from './migrate.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const dbPath = process.env.DB_PATH || path.join(ROOT, 'data', 'ime-network.db');
+const dbPath = process.env.DB_PATH || path.join(ROOT, 'storage', 'ime-network.db');
 const [email, name, pw] = process.argv.slice(2);
 if (!email || !name) { console.error('usage: node db/create-admin.mjs <email> <name> [password]'); process.exit(1); }
 

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node db/migrate.mjs && node src/server.mjs",
+    "start": "node src/server.mjs",
     "seed": "node db/seed.mjs --fresh",
     "test": "node test/api.test.mjs && node test/contacts.test.mjs && node test/org.test.mjs && node test/auth.test.mjs && node test/ui.test.mjs",
     "migrate": "node db/migrate.mjs",

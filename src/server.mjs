@@ -9,11 +9,15 @@ import contactsRoute from './routes/contacts.mjs';
 import correspondenceRoute from './routes/correspondence.mjs';
 import documentsRoute from './routes/documents.mjs';
 import { withUser, requireUser, createSession, destroySession, checkPassword, hashPassword, cookieHeader, clearCookie, tokenFromReq } from './auth.mjs';
+import { bootstrap } from '../db/bootstrap.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 app.use(withUser);   // attaches req.user + req.actor from the session cookie
+
+// health check lives ABOVE the auth gate so Railway can always reach it
+app.get('/api/health', (_q, r) => r.json({ ok: true }));
 
 // ---- auth routes (open) ----
 app.post('/api/auth/login', (req, res) => {
@@ -82,7 +86,6 @@ const ZIP = (() => {
 })();
 
 // ---------------------------------------------------------------- reference
-app.get('/api/health', (_q, r) => r.json({ ok: true, schema_version: db.prepare("SELECT value FROM setting WHERE key='schema_version'").get()?.value }));
 app.get('/api/specialties', (_q, r) => r.json(db.prepare('SELECT * FROM specialty ORDER BY sort_order').all()));
 app.get('/api/settings', (_q, r) => r.json(Object.fromEntries(db.prepare('SELECT key,value FROM setting').all().map(s => [s.key, s.value]))));
 app.put('/api/settings/:key', (req, res) => {
@@ -421,5 +424,15 @@ app.use(express.static(path.join(ROOT, 'public')));
 app.use((err, _req, res, _next) => { console.error(err); res.status(500).json({ error: err.message }); });
 
 const PORT = process.env.PORT || 3000;
-if (process.env.NODE_ENV !== 'test') app.listen(PORT, () => console.log(`IME network API -> http://localhost:${PORT}`));
+if (process.env.NODE_ENV !== 'test') {
+  // Open the port IMMEDIATELY so Railway's health check sees a live service,
+  // then seed. Seeding a fresh database can take a few seconds; doing it before
+  // listen() left the port closed long enough for Railway to kill the container
+  // mid-seed. A bootstrap failure must not crash the server either — it logs and
+  // the app still serves (an empty DB just means nobody can log in until fixed).
+  app.listen(PORT, () => console.log(`IME network API -> http://localhost:${PORT}`));
+  bootstrap()
+    .then(() => console.log('[bootstrap] complete'))
+    .catch((e) => console.error('[bootstrap] FAILED (server still running):', e.message));
+}
 export default app;

@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const DB_PATH = process.env.DB_PATH || path.join(ROOT, 'data', 'ime-network.db');  // set DB_PATH before importing this module
+export const DB_PATH = process.env.DB_PATH || path.join(ROOT, 'storage', 'ime-network.db');  // set DB_PATH before importing this module
 export const db = new Database(DB_PATH);
 db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');

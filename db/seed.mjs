@@ -9,7 +9,7 @@ const __dir = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dir, '..');
 // resolved lazily: a static const would freeze the path at import time,
 // before a caller has a chance to set DB_PATH.
-const dbPath = () => process.env.DB_PATH || path.join(ROOT, 'data', 'ime-network.db');
+const dbPath = () => process.env.DB_PATH || path.join(ROOT, 'storage', 'ime-network.db');
 
 const SPECIALTIES = [
   { code: 'PSYCH',  name: 'Psychology / Psychiatry / Neuropsychology', is_core: 1, sort_order: 1 },

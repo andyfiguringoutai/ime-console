@@ -22,4 +22,4 @@ ENV PORT=3000
 EXPOSE 3000
 
 # On boot: apply migrations, then start.
-CMD ["sh", "-c", "node db/migrate.mjs && node src/server.mjs"]
+CMD ["node", "src/server.mjs"]
