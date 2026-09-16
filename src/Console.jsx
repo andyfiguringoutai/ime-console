@@ -771,6 +771,54 @@ function SpecFilter({ specs, setSpecs, providers, activeCore }) {
   );
 }
 
+// Admin-only: see who has access and add people. The server generates a
+// temporary password, shown once here; the new person changes it after signing in.
+function TeamPanel() {
+  const [users, setUsers] = useState([]);
+  const [f, setF] = useState({ email: "", name: "", role: "member" });
+  const [made, setMade] = useState(null);
+  const [err, setErr] = useState(null);
+  const load = () => api("GET", "/api/users").then(setUsers).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+  const add = async () => {
+    setErr(null); setMade(null);
+    try {
+      const r = await api("POST", "/api/users", { email: f.email.trim().toLowerCase(), name: f.name.trim(), role: f.role });
+      setMade(r); setF({ email: "", name: "", role: "member" }); load();
+    } catch (e) { setErr(e.message); }
+  };
+  const ok = f.email.includes("@") && f.name.trim();
+  const small = { ...inp, fontSize: 11, padding: "5px 7px", width: "100%", marginBottom: 5 };
+  return (
+    <div>
+      <div style={{ borderTop: `1px solid ${C.ruleSoft}`, margin: "11px 0 9px" }} />
+      <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 6 }}>Team</div>
+      {users.map((u) => (
+        <div key={u.id} style={{ fontSize: 11, marginBottom: 4, display: "flex", justifyContent: "space-between", gap: 6 }}>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={u.email}>{u.name}</span>
+          <span style={{ fontFamily: MONO, fontSize: 9, color: C.muted, flexShrink: 0 }}>{u.role}</span>
+        </div>
+      ))}
+      <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, margin: "10px 0 6px" }}>Add a person</div>
+      <input placeholder="name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} style={small} />
+      <input placeholder="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} style={small} />
+      <select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })} style={{ ...small, marginBottom: 8 }}>
+        <option value="member">member</option>
+        <option value="admin">admin (can add people)</option>
+      </select>
+      <button onClick={add} disabled={!ok} style={{ ...btn, fontSize: 11, width: "100%", opacity: ok ? 1 : 0.4 }}>Add</button>
+      {err && <div style={{ fontSize: 10.5, marginTop: 7, color: C.none }}>{err}</div>}
+      {made && (
+        <div style={{ fontSize: 10.5, marginTop: 8, padding: 7, border: `1px solid ${C.rule}` }}>
+          Added {made.name}. Send them the site link, their email, and this temporary password (shown only once):
+          <div style={{ fontFamily: MONO, fontSize: 12, margin: "5px 0", userSelect: "all" }}>{made.temporary_password}</div>
+          They can change it from this menu after signing in.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AccountMenu({ me }) {
   const [open, setOpen] = useState(false);
   const [pw, setPw] = useState({ current: "", next: "" });
@@ -790,7 +838,7 @@ function AccountMenu({ me }) {
       </button>
       {open && (
         <div style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", background: C.surface, border: `1px solid ${C.rule}`,
-          padding: 12, width: 232, zIndex: 50, boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}>
+          padding: 12, width: me.role === "admin" ? 290 : 232, maxHeight: "80vh", overflowY: "auto", zIndex: 50, boxShadow: "0 4px 16px rgba(0,0,0,0.08)" }}>
           <div style={{ fontSize: 11, color: C.muted, marginBottom: 10 }}>{me.email}</div>
           <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 6 }}>Change password</div>
           <input type="password" placeholder="current" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })}
@@ -800,6 +848,7 @@ function AccountMenu({ me }) {
           <button onClick={change} disabled={!pw.current || pw.next.length < 8}
             style={{ ...btn, fontSize: 11, width: "100%", opacity: (!pw.current || pw.next.length < 8) ? 0.4 : 1 }}>Update</button>
           {msg && <div style={{ fontSize: 10.5, marginTop: 7, color: msg.ok ? C.owned : C.none }}>{msg.t}</div>}
+          {me.role === "admin" && <TeamPanel />}
           <div style={{ borderTop: `1px solid ${C.ruleSoft}`, margin: "11px 0 9px" }} />
           <button onClick={logout} style={{ background: "none", border: `1px solid ${C.rule}`, width: "100%", padding: "6px", fontSize: 11.5, cursor: "pointer", fontFamily: SANS, color: C.ink }}>Sign out</button>
         </div>
