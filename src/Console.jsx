@@ -1073,6 +1073,191 @@ const Empty = ({ children }) => <div style={{ fontSize: 11.5, color: C.muted, pa
 const linkBtn = { background: "none", border: "none", color: C.travel, fontSize: 10.5, cursor: "pointer", padding: 0, fontFamily: SANS };
 
 // ---------------------------------------------------------------------------
+// New provider. Until now the only ways in were the seed and the xlsx importer,
+// which meant every addition was a spreadsheet round-trip. The POST endpoint
+// existed from the start; this is the door to it.
+//
+// The one field that isn't optional-in-spirit is the location: a provider with
+// no site is invisible to both the map and the ledger, so the form asks for one
+// up front rather than letting a record be born unmeasurable.
+// ---------------------------------------------------------------------------
+const FIELD_LABEL = { fontFamily: MONO, fontSize: 8.5, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, display: "block", marginBottom: 3 };
+
+function Field({ label, hint, children }) {
+  return (
+    <label style={{ display: "block", minWidth: 0 }}>
+      <span style={FIELD_LABEL}>{label}</span>
+      {children}
+      {hint && <span style={{ display: "block", fontSize: 9.5, color: C.muted, marginTop: 2 }}>{hint}</span>}
+    </label>
+  );
+}
+
+function NewProviderDialog({ onClose, onCreated }) {
+  const [f, setF] = useState({
+    full_name: "", credentials: "", primary_specialty_id: "", specialty_detail: "",
+    preference: "", point_of_contact: "", email: "", phone: "", website: "",
+    is_qme: false, notes: "", city: "", site_type: "office",
+  });
+  const [specialties, setSpecialties] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [oops, setOops] = useState(null);
+  const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
+
+  useEffect(() => {
+    api("GET", "/api/specialties").then(setSpecialties).catch((e) => setOops(e.message));
+  }, []);
+  useEffect(() => {
+    const esc = (e) => { if (e.key === "Escape" && !busy) onClose(); };
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [busy, onClose]);
+
+  const named = f.full_name.trim();
+  const place = f.city.trim();
+
+  const submit = async () => {
+    if (!named || busy) return;
+    setBusy(true);
+    try {
+      const created = await api("POST", "/api/physicians", {
+        full_name: named,
+        credentials: f.credentials.trim() || null,
+        primary_specialty_id: f.primary_specialty_id ? Number(f.primary_specialty_id) : null,
+        specialty_detail: f.specialty_detail.trim() || null,
+        preference: f.preference || null,
+        point_of_contact: f.point_of_contact.trim() || null,
+        email: f.email.trim() || null,
+        phone: f.phone.trim() || null,
+        website: f.website.trim() || null,
+        is_qme: f.is_qme ? 1 : 0,
+        notes: f.notes.trim() || null,
+      });
+      // A brand-new site is exactly what "assumed" is for: you entered it, the
+      // provider hasn't confirmed it. The record's trust strip will say so.
+      if (place) {
+        await api("POST", `/api/physicians/${created.id}/locations`, {
+          city: place, site_type: f.site_type, confirmation_status: "needs_confirm",
+        });
+      }
+      onCreated(created.id);
+    } catch (e) { setOops(e.message); setBusy(false); }
+  };
+
+  return (
+    <div onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}
+      style={{ position: "fixed", inset: 0, background: "rgba(16,32,31,0.42)", zIndex: 50,
+        display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "6vh 16px 24px", overflowY: "auto" }}>
+      <div role="dialog" aria-modal="true" aria-label="Add a provider"
+        style={{ background: C.surface, border: `1px solid ${C.rule}`, width: "100%", maxWidth: 620,
+          boxShadow: "0 18px 48px rgba(16,32,31,0.22)", opacity: busy ? 0.7 : 1, transition: "opacity .12s" }}>
+
+        <div style={{ padding: "14px 18px", borderBottom: `1px solid ${C.ruleSoft}`, display: "flex", alignItems: "baseline", gap: 8 }}>
+          <h2 style={{ fontFamily: COND, fontSize: 20, fontWeight: 600, margin: 0 }}>Add a provider</h2>
+          <div style={{ flex: 1 }} />
+          <button onClick={() => !busy && onClose()} aria-label="Close"
+            style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 2px" }}>×</button>
+        </div>
+
+        {oops && <div style={{ background: C.noneBg, color: C.none, padding: "7px 10px", fontSize: 11.5, margin: "12px 18px 0" }}>{oops}</div>}
+
+        <div style={{ padding: "14px 18px 4px", display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,2fr) minmax(0,1fr)", gap: 10 }}>
+            <Field label="Name *">
+              <input autoFocus value={f.full_name} onChange={set("full_name")} placeholder="Jane Okafor"
+                onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+                style={{ ...inp, width: "100%", boxSizing: "border-box" }} />
+            </Field>
+            <Field label="Credentials">
+              <input value={f.credentials} onChange={set("credentials")} placeholder="M.D."
+                style={{ ...inp, width: "100%", boxSizing: "border-box" }} />
+            </Field>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.6fr)", gap: 10 }}>
+            <Field label="Specialty" hint="Drives the coverage ledger.">
+              <select value={f.primary_specialty_id} onChange={set("primary_specialty_id")}
+                style={{ ...inp, width: "100%", boxSizing: "border-box" }}>
+                <option value="">— none —</option>
+                {specialties.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Specialty detail" hint="As you'd describe it to a client.">
+              <input value={f.specialty_detail} onChange={set("specialty_detail")} placeholder="Orthopedic Surgery — spine"
+                style={{ ...inp, width: "100%", boxSizing: "border-box" }} />
+            </Field>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 10 }}>
+            <Field label="First location" hint="City or ZIP. Without one they appear nowhere on the map.">
+              {/* Own datalist: the shared #ca-places one lives in MapView, which
+                  is not mounted while you are on the Providers tab. */}
+              <input list="ca-places-new" value={f.city} onChange={set("city")} placeholder="Bakersfield or 93301"
+                style={{ ...inp, width: "100%", boxSizing: "border-box" }} />
+              <datalist id="ca-places-new">{CITY_DATA.slice(0, 200).map((c) => <option key={c.n} value={c.n} />)}</datalist>
+            </Field>
+            <Field label="Location type">
+              <select value={f.site_type} onChange={set("site_type")} disabled={!place}
+                style={{ ...inp, width: "100%", boxSizing: "border-box", opacity: place ? 1 : 0.5 }}>
+                <option value="office">Standing office</option>
+                <option value="flyin">Fly-in / rented</option>
+              </select>
+            </Field>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 10 }}>
+            <Field label="Phone">
+              <input value={f.phone} onChange={set("phone")} placeholder="(555) 010-0100"
+                style={{ ...inp, width: "100%", boxSizing: "border-box" }} />
+            </Field>
+            <Field label="Email">
+              <input value={f.email} onChange={set("email")} placeholder="scheduling@practice.com"
+                style={{ ...inp, width: "100%", boxSizing: "border-box" }} />
+            </Field>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 10 }}>
+            <Field label="Point of contact">
+              <input value={f.point_of_contact} onChange={set("point_of_contact")} placeholder="Practice manager"
+                style={{ ...inp, width: "100%", boxSizing: "border-box" }} />
+            </Field>
+            <Field label="Preference">
+              <select value={f.preference} onChange={set("preference")} style={{ ...inp, width: "100%", boxSizing: "border-box" }}>
+                <option value="">— not set —</option>
+                <option value="Preferred">Preferred</option>
+                <option value="Secondary">Secondary</option>
+                <option value="Do Not Use">Do Not Use</option>
+              </select>
+            </Field>
+          </div>
+
+          <Field label="Notes">
+            <textarea value={f.notes} onChange={set("notes")} rows={2}
+              placeholder="Anything the next person picking up this record should know."
+              style={{ ...inp, width: "100%", boxSizing: "border-box", resize: "vertical", fontFamily: SANS }} />
+          </Field>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12 }}>
+            <input type="checkbox" checked={f.is_qme} onChange={set("is_qme")} />
+            <span>QME certified</span>
+          </label>
+        </div>
+
+        <div style={{ padding: "12px 18px 16px", display: "flex", alignItems: "center", gap: 9 }}>
+          <span style={{ fontFamily: MONO, fontSize: 9, color: C.muted, flex: 1 }}>
+            {place ? "Location saved as unconfirmed until you verify it." : "No location — they won't appear on the map yet."}
+          </span>
+          <button onClick={() => !busy && onClose()} style={{ ...btn, background: "none", color: C.ink, border: `1px solid ${C.rule}` }}>Cancel</button>
+          <button onClick={submit} disabled={!named || busy} style={{ ...btn, opacity: named && !busy ? 1 : 0.4 }}>
+            {busy ? "Saving…" : "Add provider"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Providers — master/detail. The list is how you work; the record is what you
 // work on. A full-page record would lose your place on every provider.
 // ---------------------------------------------------------------------------
@@ -1083,6 +1268,16 @@ function Providers({ providers, reload, actor, specs, reach, standard, openProvi
   const [q, setQ] = useState("");
   const [fCore, setFCore] = useState("all");
   const [fConf, setFConf] = useState("all");
+  const [adding, setAdding] = useState(false);
+
+  // A new record should be the thing you are looking at, and no filter should
+  // hide it — so clear the filters and select it.
+  const afterCreate = async (id) => {
+    setAdding(false);
+    setQ(""); setFCore("all"); setFConf("all");
+    await reload();
+    setSel(id);
+  };
 
   const list = providers.filter((p) => {
     if (q && !(p.name + p.specialty + p.detail).toLowerCase().includes(q.toLowerCase())) return false;
@@ -1094,8 +1289,10 @@ function Providers({ providers, reload, actor, specs, reach, standard, openProvi
 
   return (
     <div style={{ display: "flex", gap: 0, border: `1px solid ${C.rule}`, background: C.surface, alignItems: "stretch", minHeight: 560 }}>
+      {adding && <NewProviderDialog onClose={() => setAdding(false)} onCreated={afterCreate} />}
       <div style={{ width: 272, borderRight: `1px solid ${C.rule}`, display: "flex", flexDirection: "column", flexShrink: 0 }}>
         <div style={{ padding: 9, borderBottom: `1px solid ${C.ruleSoft}`, display: "flex", flexDirection: "column", gap: 6 }}>
+          <button onClick={() => setAdding(true)} style={{ ...btn, width: "100%", padding: "7px 11px" }}>+ Add provider</button>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${providers.length} providers`}
             style={{ ...inp, fontSize: 12, padding: "6px 8px" }} />
           <div style={{ display: "flex", gap: 5 }}>
@@ -1191,7 +1388,9 @@ function ProviderRecord({ id, reload, actor, reach, standard }) {
     : confirmed === locs.length
     ? { tone: C.owned, bg: C.ownedBg, text: `${locs.length} site${locs.length > 1 ? "s" : ""} confirmed directly with the provider. Safe to claim.` }
     : confirmed === 0
-    ? { tone: C.flag, bg: C.flagBg, text: `${locs.length} site${locs.length > 1 ? "s" : ""}, none confirmed — inferred from the source export, never verified with the provider.` }
+    // Where the claim came from matters as much as that it is unconfirmed: a
+    // hand-entered record was never in any export, and saying so would be false.
+    ? { tone: C.flag, bg: C.flagBg, text: `${locs.length} site${locs.length > 1 ? "s" : ""}, none confirmed — ${d.source_id ? "inferred from the source export" : "entered by hand"}, never verified with the provider.` }
     : { tone: C.flag, bg: C.flagBg, text: `${locs.length} sites, ${confirmed} confirmed. The remaining ${locs.length - confirmed} are inferred, not verified.` };
   trust.text += travelLine;
 

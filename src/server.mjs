@@ -193,6 +193,11 @@ app.post('/api/physicians', (req, res) => {
     .run({ source_id: null, credentials: null, primary_specialty_id: null, specialty_detail: null,
            preference: null, point_of_contact: null, email: null, phone: null, website: null,
            is_qme: 0, performs_ime: 1, notes: null, ...b });
+  // Give every new physician a travel policy, exactly as the importer does.
+  // Without it the list query's LEFT JOIN yields a null travel_mode, and the
+  // record's travel panel has no row to update.
+  db.prepare("INSERT INTO travel_policy (physician_id,mode) VALUES (?,'none') ON CONFLICT DO NOTHING")
+    .run(Number(info.lastInsertRowid));
   const after = physFull(info.lastInsertRowid);
   audit('physician', Number(info.lastInsertRowid), 'create', req.actor, null, after);
   res.status(201).json(after);

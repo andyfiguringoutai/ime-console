@@ -84,6 +84,15 @@ await t('create physician', async () => {
     { full_name: 'Test Cardiologist', primary_specialty_id: 4, preference: 'Preferred', phone: '555' });
   assert.equal(status, 201); assert.ok(body.id); newId = body.id;
 });
+await t('a created physician gets a travel policy, like an imported one', async () => {
+  // Without this the list query's LEFT JOIN returns travel_mode null, and the
+  // record's travel panel has no row to update.
+  const row = db.prepare('SELECT mode FROM travel_policy WHERE physician_id=?').get(newId);
+  assert.ok(row, 'travel_policy row should exist');
+  assert.equal(row.mode, 'none', 'defaults to the conservative answer');
+  const listed = (await api('GET', '/api/physicians')).body.find(p => p.id === newId);
+  assert.equal(listed.travel_mode, 'none', 'and it surfaces in the list');
+});
 await t('adding a Bakersfield location geocodes and closes the Kern cardio gap', async () => {
   const before = computeCoverage(db).cells.find(c => c.region === 'Kern / Bakersfield' && c.specialty === 'CARDIO');
   assert.equal(before.count, 0);
