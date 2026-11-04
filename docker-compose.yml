@@ -4,7 +4,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ime-data:/app/data          # database + uploaded documents persist here
+      - ime-data:/app/storage       # database + uploaded documents persist here
     environment:
       - NODE_ENV=production
     restart: unless-stopped

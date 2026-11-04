@@ -16,7 +16,10 @@ RUN npm ci --omit=dev || npm install --omit=dev
 # there is NO build step here — nothing that can fail during deploy.
 COPY . .
 
-# Railway provides persistent storage via its dashboard, mounted at /app/data.
+# Railway provides persistent storage via its dashboard. The volume MUST be
+# mounted at /app/storage — that is where the SQLite database and uploaded
+# documents are written. (The read-only gazetteer in /app/data is baked into
+# the image; do NOT mount the volume over /app/data or it hides those files.)
 ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000

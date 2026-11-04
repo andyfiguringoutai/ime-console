@@ -19,6 +19,11 @@ import { migrate } from './migrate.mjs';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DB_PATH = process.env.DB_PATH || path.join(ROOT, 'storage', 'ime-network.db');
 const EXPORT = path.join(ROOT, 'data', 'FFD_Provider_Directory_Export__1_.xlsx');
+// A faithful snapshot of the real production data, built from a live backup.
+// When present, a brand-new (empty) database is populated from it instead of
+// the generic seed — so the app comes up with the actual providers, addresses
+// and contacts, not a blank starter set.
+const SNAPSHOT = path.join(ROOT, 'data', 'seed-db', 'ime-network.db');
 
 export async function bootstrap() {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -27,8 +32,15 @@ export async function bootstrap() {
   const db = new Database(DB_PATH);
   const physicians = db.prepare('SELECT COUNT(*) c FROM physician').get().c;
 
-  // 1. Empty database -> seed + import the bundled export
-  if (physicians === 0) {
+  // 1. Empty database -> restore the bundled snapshot, else seed the generic set
+  if (physicians === 0 && fs.existsSync(SNAPSHOT)) {
+    console.log('[bootstrap] empty database — restoring bundled data snapshot…');
+    db.close();
+    fs.copyFileSync(SNAPSHOT, DB_PATH);           // the snapshot carries the full schema + data
+    migrate();                                    // idempotent; ensures schema is current
+    const n = new Database(DB_PATH).prepare('SELECT COUNT(*) c FROM physician').get().c;
+    console.log(`[bootstrap] restored ${n} providers from snapshot`);
+  } else if (physicians === 0) {
     console.log('[bootstrap] empty database — seeding…');
     db.close();
     const { seed } = await import('./seed.mjs');

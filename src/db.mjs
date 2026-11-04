@@ -7,6 +7,11 @@ export const DB_PATH = process.env.DB_PATH || path.join(ROOT, 'storage', 'ime-ne
 export const db = new Database(DB_PATH);
 db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');
+// Printed on every boot so you can confirm, in the deploy logs, that the
+// database is on the persistent volume (/app/storage) and not the temporary
+// container disk. If this path isn't under your mounted volume, data is lost
+// on restart.
+console.log(`[db] database at ${DB_PATH}`);
 
 /** Append-only provenance. Every mutation goes through this. */
 export function audit(entity, entity_id, action, actor, before, after) {

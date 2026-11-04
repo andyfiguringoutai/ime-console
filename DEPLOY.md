@@ -45,7 +45,7 @@ restarts don't lose data. Access requires a login; there is no public data.
    ```
    [mounts]
      source = "ime_data"
-     destination = "/app/data"
+     destination = "/app/storage"
    ```
 
 5. Set a session secret and deploy:
@@ -77,7 +77,7 @@ restarts don't lose data. Access requires a login; there is no public data.
    - Environment: **Docker**
    - Instance type: the cheapest paid tier (the free tier sleeps and loses the
      disk — not suitable here)
-   - Add a **Disk**: mount path `/app/data`, size 1 GB
+   - Add a **Disk**: mount path `/app/storage`, size 1 GB
    - Add env var: `NODE_ENV = production`
 3. Deploy. When it's live, open the Render **Shell** tab and run the same four
    `node db/...` commands from Option A step 6.
@@ -92,7 +92,7 @@ restarts don't lose data. Access requires a login; there is no public data.
 - **Refresh the provider data:** open a shell (`fly ssh console` or Render Shell),
   upload/copy the new xlsx into `data/`, then
   `node db/import.mjs data/<file>.xlsx`. Safe to re-run; nothing duplicates.
-- **Back up:** the entire state is the `/app/data` volume — the `.db` file plus
+- **Back up:** the entire state is the `/app/storage` volume — the `.db` file plus
   `documents/`. Both hosts can snapshot a volume; do that before any big change.
 
 ## Cost

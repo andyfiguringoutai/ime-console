@@ -1,104 +1,108 @@
 # Deploying to Railway
 
-You already have a Railway account, so this is the short path — no GitHub, no new
-signup. About 15 minutes, most of it waiting for the first build.
+The app is a Docker container. Railway builds it from the `Dockerfile`
+automatically. The database and uploaded documents live on a persistent volume,
+so redeploys never lose data. Access requires a login.
 
-The app is a Docker container. Railway detects the `Dockerfile` automatically and
-builds it. The database and uploaded documents live on a persistent volume, so
-redeploys never lose data. Access requires a login.
+The app **seeds itself** on first boot — there is no shell step, no manual
+`seed` command. You set three environment variables, Railway deploys, and the
+app creates the database, imports the bundled provider export, and creates your
+admin login on its own.
 
 ---
 
-## 1. Get the code onto your machine
+## ⚠️ If you already deployed an earlier build — read this first
 
-Extract `ime-network.tar.gz` (double-click). You'll have a folder called
-`ime-network` with a `Dockerfile` in it. That folder is what you deploy.
+Earlier instructions said to mount the volume at `/app/data`. **That was the
+cause of notes and contacts disappearing.** The app writes its database to
+`/app/storage`, so if the volume is mounted at `/app/data` the database sits on
+the container's temporary disk and is wiped on every redeploy or restart.
 
-## 2. Install the Railway CLI (one command, one time)
+Fix it once: in the Railway dashboard → your service → **Settings → Volumes**,
+change the mount path to **`/app/storage`** (detach the old one if needed), then
+redeploy. From then on, everything you enter persists.
 
-```
-# macOS
-brew install railway
-# Windows (PowerShell)
-iwr https://railway.app/install.ps1 | iex
-```
+---
 
-Then sign in — this opens your browser and uses your existing account:
-```
-railway login
-```
+## 1. Deploy from GitHub
 
-## 3. Create the project and deploy
+Push this folder to a GitHub repo, then in Railway: **New Project → Deploy from
+GitHub repo** and pick it. Railway detects the `Dockerfile` and builds. The
+first build takes a few minutes; when it finishes you get a URL.
 
-From **inside the `ime-network` folder**:
-```
-railway init          # names a new project — call it "ime-console" or similar
-railway up            # uploads the folder, builds the Dockerfile, deploys
-```
-`railway up` reads the code straight from the folder. GitHub is never involved.
+(Every later `git push` to that repo auto-deploys.)
 
-The first build takes a few minutes. When it finishes, the CLI prints a URL.
+## 2. Add the persistent volume
 
-## 4. Add the persistent volume (so data survives redeploys)
+In the Railway dashboard → your service → **Settings → Volumes → New Volume**:
 
-In the Railway **dashboard** (railway.app → your project → the service):
-- Click the service → **Variables / Settings → Volumes** → **New Volume**
-- Mount path: `/app/data`
+- **Mount path: `/app/storage`**  ← this exact path matters
 - Size: 1 GB is plenty
 
-Redeploy once after adding it so it takes effect:
+> Do **not** mount the volume at `/app/data`. That folder holds read-only map
+> data baked into the image; a volume there hides it and the app can't start.
+
+## 3. Set the environment variables
+
+In the dashboard → your service → **Variables**, add:
+
 ```
-railway up
+NODE_ENV        = production
+ADMIN_EMAIL     = you@occu-med.com
+ADMIN_PASSWORD  = (pick a strong temporary password)
+ADMIN_NAME      = Your Name
 ```
 
-## 5. Set production mode
-
-In the dashboard, service → **Variables** → add:
-```
-NODE_ENV = production
-```
 (Railway sets `PORT` itself — the app already reads it.)
 
-## 6. Seed the data and create your login (one time)
+## 4. Redeploy once
 
-Open a shell on the running service:
-```
-railway run bash
-```
-Then, inside it:
-```
-node db/seed.mjs --fresh
-node db/import.mjs data/FFD_Provider_Directory_Export__1_.xlsx
-node db/create-admin.mjs you@occu-med.com "Your Name"
-exit
-```
-The last command prints a **temporary password**. Sign in with it, then change it
-immediately from the account menu (top-right in the app).
+After the volume and variables are set, trigger a redeploy (push a commit, or
+**Deployments → Redeploy**). On this first boot the app will:
 
-> If `railway run bash` doesn't attach to the deployed container in your setup,
-> use the dashboard: service → the running deployment → the shell/terminal panel,
-> and run the same four commands there.
+- create the database on the volume at `/app/storage`,
+- **restore your real data snapshot** — the 100 providers, addresses and
+  contacts from the Nov 4 backup (not a generic starter list),
+- create your admin account from `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
 
-## 7. You're live
+You can confirm it in the deploy **logs** — look for:
 
-Open the URL from step 3. Sign in. Add teammates (Melanie) from the account menu
-— each gets a temporary password to change on first login.
+```
+[db] database at /app/storage/ime-network.db
+[bootstrap] empty database — restoring bundled data snapshot…
+[bootstrap] restored 100 providers from snapshot
+[bootstrap] created admin you@occu-med.com
+```
+
+On every later restart the logs should instead say
+`database already has N physicians — skipping seed`. If you ever see
+"restoring…" again on a restart, the volume is not mounted at `/app/storage` —
+fix the mount. (The snapshot only loads into an empty database, so once your
+data is on the volume it is never overwritten by later deploys.)
+
+## 5. You're live
+
+Open the URL. Sign in with the admin email and the password you set, then change
+the password from the account menu (top-right). Add teammates (Melanie) from the
+same menu — each gets a temporary password to change on first login.
 
 ---
 
 ## Day-to-day
 
-- **Refresh provider data:** copy a new export into `data/` and run
-  `node db/import.mjs data/<file>.xlsx` in the service shell. Safe to re-run —
-  nothing duplicates.
-- **Back up:** the whole state is the `/app/data` volume (the `.db` file plus
+- **Refresh provider data:** drop a new `.xlsx` export in `data/`, commit, and
+  push. (Re-importing is safe — nothing duplicates.) Ask me if you want the
+  import wired to run automatically on deploy.
+- **Back up:** the whole state is the `/app/storage` volume (the `.db` file plus
   `documents/`). Snapshot it in the Railway dashboard before any big change.
-- **Redeploy after code changes:** `railway up` again from the folder.
+- **Never run `node db/seed.mjs --fresh` against the live service** — the
+  `--fresh` flag deletes the database and starts over. The app seeds itself once
+  automatically; you never need to run it by hand.
 
 ## Cost
 
-For an app this small with a few daily users you'll sit inside Railway's ~$5/month
-usage. Nothing here needs a bigger instance.
+For an app this small with a few daily users you'll sit inside Railway's
+~$5/month usage. Nothing here needs a bigger instance.
 
 ## Later
 
