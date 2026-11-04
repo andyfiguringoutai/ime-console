@@ -230,7 +230,7 @@ app.get('/api/physicians', (req, res) => {
                          LEFT JOIN travel_policy t ON t.physician_id=p.id
                          WHERE p.is_active=1 ORDER BY p.full_name`).all();
   const locs = db.prepare(`SELECT ps.id, ps.physician_id, ps.site_id, ps.site_type, ps.confirmation_status,
-      s.city, s.lat, s.lng, s.label FROM physician_site ps JOIN site s ON s.id=ps.site_id
+      s.city, s.address_line, s.lat, s.lng, s.label FROM physician_site ps JOIN site s ON s.id=ps.site_id
       WHERE ps.is_active=1 AND s.is_active=1`).all();
   rows.forEach(r => (r.locations = locs.filter(l => l.physician_id === r.id)));
   if (q) { const s = String(q).toLowerCase();

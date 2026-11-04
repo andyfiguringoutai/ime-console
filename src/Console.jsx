@@ -61,7 +61,7 @@ function adaptPhysician(p) {
     travel: p.travel_mode || "none", travelRadius: p.radius_miles || null,
     conf: { confirmed: "documented", assumed: "assumed", needs_confirm: "needs_confirm", out_of_state: "out_of_state" }[weakest],
     sites: locs.map((l) => ({
-      id: l.id, region: "", city: l.city, lat: l.lat, lng: l.lng,
+      id: l.id, region: "", city: l.city, address: l.address_line || null, lat: l.lat, lng: l.lng,
       type: l.site_type === "flyin" ? "travel" : "owned",
       conf: l.confirmation_status,
     })),
@@ -114,6 +114,7 @@ export default function Console() {
   const [outreach, setOutreach] = useState([]);
   const [tab, setTab] = useState("ledger");
   const [openProvider, setOpenProvider] = useState(null);   // set from the map, consumed by the Providers tab
+  const [mapFocus, setMapFocus] = useState(null);           // set from a provider record, consumed by the map
   const [openRegion, setOpenRegion] = useState(null);
   const [status, setStatus] = useState("loading");
 
@@ -281,7 +282,7 @@ export default function Console() {
 
         <nav style={{ display: "flex", gap: 2, borderBottom: `1px solid ${C.rule}`, marginBottom: 20 }}>
           {[["ledger", "Coverage ledger"], ["map", "Map"], ["providers", `Providers (${providers.length})`], ["confirm", `Call sheet (${outreach.filter((o) => o.status === "open" || o.status === "in_progress").length})`]].map(([k, l]) => (
-            <button key={k} onClick={() => setTab(k)} style={{
+            <button key={k} onClick={() => { setTab(k); if (k === "map") setMapFocus(null); }} style={{
               background: tab === k ? C.surface : "transparent", border: "none",
               borderTop: `2px solid ${tab === k ? C.ink : "transparent"}`,
               borderLeft: `1px solid ${tab === k ? C.rule : "transparent"}`,
@@ -295,8 +296,10 @@ export default function Console() {
         </nav>
 
         {tab === "ledger" && <Ledger {...{ cellFor, targets, setTarget, setAllTargets, standard, setStandard: setStandardSrv, openRegion, setOpenRegion, limitFor, activeCore }} />}
-        {tab === "map" && <MapView {...{ providers, reach, cellFor, limitFor, standard, radii, specs, setSpecs, activeCore, openRecord: (pid) => { setOpenProvider(pid); setTab("providers"); }, setRadius, clearRadius }} />}
-        {tab === "providers" && <Providers {...{ providers, reload: load, actor, specs, reach, standard, openProvider, setOpenProvider }} />}
+        {tab === "map" && <MapView {...{ providers, reach, cellFor, limitFor, standard, radii, specs, setSpecs, activeCore, openRecord: (pid) => { setOpenProvider(pid); setTab("providers"); }, setRadius, clearRadius,
+          focus: mapFocus, clearFocus: () => setMapFocus(null) }} />}
+        {tab === "providers" && <Providers {...{ providers, reload: load, actor, specs, reach, standard, openProvider, setOpenProvider,
+          showOnMap: (pid) => { setMapFocus(pid); setTab("map"); } }} />}
         {tab === "confirm" && <CallSheet {...{ outreach, resolveItem, reopenItem, assignItem, actor }} />}
       </div>
     </div>
@@ -332,7 +335,7 @@ const fmtMin = (m) => (m >= 120 ? `${(m / 60).toFixed(1)}h` : `${m}m`);
 const SPEC_TONE = { Psych: "#4A3AA7", Ortho: "#1D6B5C", Neuro: "#2A78D6", Cardio: "#D85A30", Other: "#888780" };
 function labelFloor(k) { return k < 1.6 ? 250000 : k < 3 ? 100000 : k < 6 ? 45000 : k < 12 ? 20000 : 10000; }
 
-function MapView({ providers, reach, cellFor, limitFor, standard, radii, specs, setSpecs, activeCore, openRecord, setRadius, clearRadius }) {
+function MapView({ providers, reach, cellFor, limitFor, standard, radii, specs, setSpecs, activeCore, openRecord, setRadius, clearRadius, focus, clearFocus }) {
   const [sel, setSel] = useState("LA Basin");
   const [showAll, setShowAll] = useState(false);
   const [showBorders, setShowBorders] = useState(true);
@@ -394,6 +397,26 @@ function MapView({ providers, reach, cellFor, limitFor, standard, radii, specs, 
     zoomRef.current.s.transition().duration(500).call(zoomRef.current.z.transform, t);
   };
 
+  // ---- provider focus: arrived here from "View on map" on a provider record ----
+  const focusP = focus ? providers.find((p) => p.id === focus) || null : null;
+  const focusSites = focusP ? focusP.sites.filter((s) => s.lat != null) : [];
+  const [sameSpec, setSameSpec] = useState(true);
+  const exitFocus = () => { clearFocus && clearFocus(); zoomReset(); };
+  useEffect(() => {
+    if (!focusSites.length || !zoomRef.current) return;
+    setPlot(null);
+    setSel(nearestPin(focusSites[0].lat, focusSites[0].lng).name);
+    // fit every office, with ~60 miles of room around them for context
+    const pts = focusSites.map((s) => proj([s.lng, s.lat]));
+    const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const pad = 110;
+    const k = Math.max(1, Math.min(12, W / (x1 - x0 + pad), H / (y1 - y0 + pad)));
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    const t = d3.zoomIdentity.translate(W / 2 - cx * k, H / 2 - cy * k).scale(k);
+    zoomRef.current.s.transition().duration(600).call(zoomRef.current.z.transform, t);
+  }, [focus, W, H]);
+
   const K = tf.k;
   const toScreen = (xy) => [xy[0] * K + tf.x, xy[1] * K + tf.y];
 
@@ -442,6 +465,7 @@ function MapView({ providers, reach, cellFor, limitFor, standard, radii, specs, 
   const runSearch = () => {
     const hit = resolveQuery(query);
     if (!hit) { setPlot({ error: query }); return; }
+    if (focusP && clearFocus) clearFocus();
     const region = nearestPin(hit.lat, hit.lng);
     setPlot({ ...hit, region }); setSel(region.name); zoomTo(hit.lng, hit.lat, 12);
   };
@@ -464,11 +488,38 @@ function MapView({ providers, reach, cellFor, limitFor, standard, radii, specs, 
   }, [plot, providers]);
 
   const dots = [];
-  providers.forEach((p) => { if (!specs.has(p.core)) return; p.sites.forEach((st) => {
+  providers.forEach((p) => {
+    if (focusP) { if (p.id === focusP.id) return; if (sameSpec ? p.core !== focusP.core : !specs.has(p.core)) return; }
+    else if (!specs.has(p.core)) return;
+    p.sites.forEach((st) => {
     if (st.lat == null) return;
     dots.push({ xy: toScreen(proj([st.lng, st.lat])), p, st, hot: !!(reach[p.id] && reach[p.id][sel]) });
   }); });
   const plotXY = plot && !plot.error ? toScreen(proj([plot.lng, plot.lat])) : null;
+
+  const focusNear = useMemo(() => {
+    if (!focusP || !focusSites.length) return null;
+    const key = nearestPin(focusSites[0].lat, focusSites[0].lng).name;   // local road speed
+    const rows = [];
+    providers.forEach((p) => {
+      if (p.id === focusP.id) return;
+      if (sameSpec ? p.core !== focusP.core : !specs.has(p.core)) return;
+      let best = null;
+      p.sites.forEach((st) => {
+        if (st.lat == null) return;
+        focusSites.forEach((fs) => {
+          const d = minutesBetween(fs.lat, fs.lng, st.lat, st.lng, key);
+          if (!best || d.min < best.min) best = { ...d, city: st.city, type: st.type };
+        });
+      });
+      if (best) rows.push({ p, ...best });
+    });
+    rows.sort((a, b) => a.min - b.min);
+    const within = rows.filter((r) => r.min <= standard);
+    const byCore = {}; ALL_SPECS.forEach((c) => (byCore[c] = within.filter((r) => r.p.core === c).length));
+    return { rows, within, byCore, key };
+  }, [focusP, sameSpec, providers, specs, standard]);
+  const ringDeg = (mi) => Math.min(89, (mi / 3958.8) * (180 / Math.PI));
   const counts = {}; ALL_SPECS.forEach((c) => (counts[c] = providers.filter((p) => p.core === c && p.sites.length).length));
 
   return (
@@ -521,7 +572,11 @@ function MapView({ providers, reach, cellFor, limitFor, standard, radii, specs, 
                 {showAll && REGIONS.filter((r) => r.name !== sel && !isNoLimit(limitFor(r.name))).map((r) => (
                   <path key={r.name} d={path(circleFor(r))} fill="none" stroke={toneOf(r)} strokeOpacity="0.4" strokeWidth={0.8 / K} strokeDasharray={`${2 / K} ${2 / K}`} />
                 ))}
-                {selR && !isNoLimit(limitFor(sel)) && <path d={path(circleFor(selR))} fill={toneOf(selR)} fillOpacity="0.1" stroke={toneOf(selR)} strokeWidth={1.8 / K} />}
+                {selR && !focusP && !isNoLimit(limitFor(sel)) && <path d={path(circleFor(selR))} fill={toneOf(selR)} fillOpacity="0.1" stroke={toneOf(selR)} strokeWidth={1.8 / K} />}
+                {focusNear && focusSites.map((st) => (
+                  <path key={"ring" + st.id} d={path(d3.geoCircle().center([st.lng, st.lat]).radius(ringDeg(radiusMiles(focusNear.key, standard)))())}
+                    fill={SPEC_TONE[focusP.core]} fillOpacity="0.07" stroke={C.ink} strokeOpacity="0.55" strokeWidth={1.2 / K} strokeDasharray={`${4 / K} ${3 / K}`} />
+                ))}
               </g>
             </g>
 
@@ -550,6 +605,18 @@ function MapView({ providers, reach, cellFor, limitFor, standard, radii, specs, 
                   <circle cx={xy[0]} cy={xy[1]} r={on ? 5.5 : 3.8} fill={toneOf(r)} stroke={C.surface} strokeWidth="1.4" />
                   {(on || K > 2.2) && <text x={xy[0] + 9} y={xy[1] - 6} style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 500 }} fill={C.ink} stroke="#EDF1F0" strokeWidth="2.4" paintOrder="stroke">{r.pin}</text>}
                   <title>{r.name} · {r.pin}</title>
+                </g>
+              );
+            })}
+
+            {focusP && focusSites.map((st, i) => {
+              const xy = toScreen(proj([st.lng, st.lat]));
+              return (
+                <g key={"focus" + st.id} onClick={() => openRecord(focusP.id)} style={{ cursor: "pointer" }}>
+                  <circle cx={xy[0]} cy={xy[1]} r="11" fill="none" stroke={C.ink} strokeWidth="1.6" />
+                  <circle cx={xy[0]} cy={xy[1]} r="6.5" fill={SPEC_TONE[focusP.core]} stroke={C.surface} strokeWidth="2" />
+                  {i === 0 && <text x={xy[0] + 14} y={xy[1] + 4} style={{ fontFamily: SANS, fontSize: 11, fontWeight: 600 }} fill={C.ink} stroke="#EDF1F0" strokeWidth="3" paintOrder="stroke">{focusP.name.split(",")[0]}</text>}
+                  <title>{focusP.name} · {st.address || st.city}{st.type === "travel" ? " (fly-in)" : ""}</title>
                 </g>
               );
             })}
@@ -587,7 +654,7 @@ function MapView({ providers, reach, cellFor, limitFor, standard, radii, specs, 
             {[[C.owned, "covered"], [C.flag, "partial"], [C.none, "empty"], [C.travel, "corridor"]].map(([col, l]) => (
               <span key={l} style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 7, height: 7, background: col }} />{l}</span>
             ))}
-            <span style={{ opacity: 0.75 }}>Scroll to zoom · drag to pan · ringed dots are fly-in</span>
+            <span style={{ opacity: 0.75 }}>{focusP ? `Dashed ring = ${standard}-min drive from ${focusP.name.split(",")[0]} · ` : ""}Scroll to zoom · drag to pan · ringed dots are fly-in</span>
           </div>
         </div>
 
@@ -597,7 +664,100 @@ function MapView({ providers, reach, cellFor, limitFor, standard, radii, specs, 
               No California city or ZIP matching “{plot.error}”. Try a full ZIP, or a city from the list.
             </div>
           )}
-          {plotResults ? (
+          {focusP && !plotResults ? (
+            <>
+              <div style={{ background: C.surface, border: `1px solid ${C.rule}`, borderLeft: `3px solid ${SPEC_TONE[focusP.core]}`, padding: "13px 15px", marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted }}>Viewing provider</span>
+                  <button onClick={exitFocus} style={{ ...linkBtn, fontSize: 10.5 }}>✕ exit to full map</button>
+                </div>
+                <div style={{ fontFamily: COND, fontSize: 21, fontWeight: 600, margin: "3px 0 2px" }}>{focusP.name.split(",")[0]}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: C.muted, marginBottom: 8 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: SPEC_TONE[focusP.core] }} />
+                  {focusP.specialty || focusP.core}{focusP.org ? ` · ${focusP.org}` : ""}
+                </div>
+                {focusSites.length === 0
+                  ? <div style={{ fontSize: 11.5, color: C.none }}>No mapped location yet. Add a city or ZIP under “Where they sit” on the record.</div>
+                  : focusSites.map((st) => (
+                      <div key={st.id} style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 11.5, padding: "2px 0" }}>
+                        <span style={{ flex: 1, minWidth: 0 }}>{st.address || st.city}{st.address && <span style={{ color: C.muted }}> · {st.city}</span>}</span>
+                        <span style={{ fontFamily: MONO, fontSize: 8.5, color: st.type === "travel" ? C.travel : C.owned }}>{st.type === "travel" ? "FLY-IN" : "OFFICE"}</span>
+                      </div>
+                    ))}
+                <button onClick={() => openRecord(focusP.id)} style={{ ...btn, fontSize: 11, padding: "4px 10px", marginTop: 10 }}>← Back to record</button>
+              </div>
+
+              <div style={{ display: "flex", marginBottom: 10, border: `1px solid ${C.rule}` }} role="group" aria-label="Compare against">
+                {[[true, `Same specialty · ${focusP.core}`], [false, "All specialties"]].map(([v, l]) => (
+                  <button key={l} onClick={() => setSameSpec(v)} aria-pressed={sameSpec === v}
+                    style={{ flex: 1, background: sameSpec === v ? C.ink : C.surface, color: sameSpec === v ? C.surface : C.ink,
+                      border: "none", padding: "6px 8px", fontSize: 11, cursor: "pointer", fontFamily: MONO, borderRadius: 0 }}>{l}</button>
+                ))}
+              </div>
+
+              {focusNear && (
+                <>
+                  {sameSpec ? (
+                    <div style={{ background: focusNear.within.length ? C.ownedBg : C.noneBg, padding: "10px 12px", marginBottom: 10 }}>
+                      <div style={{ fontFamily: COND, fontSize: 16, fontWeight: 600, color: focusNear.within.length ? C.owned : C.none }}>
+                        {focusNear.within.length
+                          ? `${focusNear.within.length} other ${focusP.core} provider${focusNear.within.length > 1 ? "s" : ""} within ${standard} min`
+                          : `No other ${focusP.core} provider within ${standard} min`}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                        {focusNear.within.length
+                          ? `Nearest: ${focusNear.within[0].p.name.split(",")[0]} in ${focusNear.within[0].city}, ~${fmtMin(focusNear.within[0].min)} away.`
+                          : focusNear.rows.length
+                            ? `${focusP.name.split(",")[0]} is your only ${focusP.core} coverage here. Next closest: ${focusNear.rows[0].p.name.split(",")[0]} in ${focusNear.rows[0].city}, ~${fmtMin(focusNear.rows[0].min)}.`
+                            : `${focusP.name.split(",")[0]} is the only ${focusP.core} provider on the map.`}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gridTemplateColumns: `repeat(${ALL_SPECS.filter((c) => specs.has(c)).length || 1}, 1fr)`, gap: 5, marginBottom: 10 }}>
+                      {ALL_SPECS.filter((c) => specs.has(c)).map((c) => (
+                        <div key={c} style={{ background: focusNear.byCore[c] ? C.ownedBg : C.noneBg, padding: "7px 6px", textAlign: "center" }}>
+                          <div style={{ fontFamily: COND, fontSize: 17, fontWeight: 600, color: focusNear.byCore[c] ? C.owned : C.none }}>{focusNear.byCore[c]}</div>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontFamily: MONO, fontSize: 8.5, color: C.muted, textTransform: "uppercase" }}>
+                            <span style={{ width: 5, height: 5, borderRadius: "50%", background: SPEC_TONE[c] }} />{c}
+                          </div>
+                        </div>
+                      ))}
+                      <div style={{ gridColumn: "1 / -1", fontSize: 10.5, color: C.muted }}>Other providers within {standard} min of {focusP.name.split(",")[0]}, by specialty{specs.size < ALL_SPECS.length ? " — the ones you're tracking up top" : ""}.</div>
+                    </div>
+                  )}
+
+                  <div style={{ background: C.surface, border: `1px solid ${C.rule}`, padding: "10px 12px" }}>
+                    <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 7 }}>
+                      Nearby, closest first ({focusNear.rows.length})
+                    </div>
+                    {focusNear.rows.length === 0 ? <div style={{ fontSize: 11.5, color: C.muted }}>Nobody else to compare.</div> : (
+                      <div style={{ display: "flex", flexDirection: "column", maxHeight: 340, overflowY: "auto" }}>
+                        {focusNear.rows.slice(0, 40).map((r, i) => {
+                          const cut = i > 0 && focusNear.rows[i - 1].min <= standard && r.min > standard;
+                          return (
+                            <React.Fragment key={r.p.id}>
+                              {cut && <div style={{ fontFamily: MONO, fontSize: 8.5, color: C.muted, padding: "5px 2px 3px", borderTop: `1px dashed ${C.rule}`, marginTop: 3 }}>beyond {standard} min</div>}
+                              <button onClick={() => openRecord(r.p.id)} className="rowhover" title={`Open ${r.p.name.split(",")[0]}`}
+                                style={{ display: "flex", gap: 7, fontSize: 11, alignItems: "baseline", background: "none", border: "none",
+                                  borderBottom: `1px solid ${C.ruleSoft}`, padding: "4px 2px", cursor: "pointer", textAlign: "left", width: "100%" }}>
+                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: SPEC_TONE[r.p.core], flexShrink: 0 }} />
+                                <span style={{ flex: 1, minWidth: 0, color: C.ink }}>
+                                  {r.p.name.split(",")[0]}
+                                  {!sameSpec && <span style={{ color: C.muted, fontSize: 9.5 }}> · {r.p.core}</span>}
+                                </span>
+                                <span style={{ fontFamily: MONO, fontSize: 9.5, color: C.muted }}>{r.city}{r.type === "travel" ? " ✈" : ""}</span>
+                                <span style={{ fontFamily: MONO, fontSize: 9.5, width: 82, textAlign: "right", color: r.min <= 30 ? C.near : r.min <= standard ? C.owned : C.muted }}>{r.miles} mi · ~{fmtMin(r.min)}</span>
+                              </button>
+                            </React.Fragment>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </>
+          ) : plotResults ? (
             <>
               <div style={{ background: C.surface, border: `1px solid ${C.rule}`, padding: "13px 15px", marginBottom: 12 }}>
                 <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 4 }}>{plot.kind} plotted</div>
@@ -1027,8 +1187,10 @@ const linkBtn = { background: "none", border: "none", color: C.travel, fontSize:
 // Providers — master/detail. The list is how you work; the record is what you
 // work on. A full-page record would lose your place on every provider.
 // ---------------------------------------------------------------------------
-function Providers({ providers, reload, actor, specs, reach, standard, openProvider, setOpenProvider }) {
-  const [sel, setSel] = useState(null);
+function Providers({ providers, reload, actor, specs, reach, standard, openProvider, setOpenProvider, showOnMap }) {
+  // Start on the hand-off from the map, if any. (Starting at null let the
+  // "default to the first provider" effect win the race and open the wrong record.)
+  const [sel, setSel] = useState(() => openProvider || null);
   // Arriving from the map: select that provider and clear the hand-off.
   useEffect(() => { if (openProvider) { setSel(openProvider); setOpenProvider(null); } }, [openProvider]);
   const [q, setQ] = useState("");
@@ -1094,14 +1256,14 @@ function Providers({ providers, reload, actor, specs, reach, standard, openProvi
         </div>
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        {sel ? <ProviderRecord key={sel} id={sel} reload={reload} actor={actor} reach={reach} standard={standard} />
+        {sel ? <ProviderRecord key={sel} id={sel} reload={reload} actor={actor} reach={reach} standard={standard} showOnMap={showOnMap} />
              : <div style={{ padding: 40, color: C.muted, fontSize: 12.5 }}>Select a provider.</div>}
       </div>
     </div>
   );
 }
 
-function ProviderRecord({ id, reload, actor, reach, standard }) {
+function ProviderRecord({ id, reload, actor, reach, standard, showOnMap }) {
   const [d, setD] = useState(null);
   const [contacts, setContacts] = useState({ people: [], methods: [], unattached: [] });
   const [corr, setCorr] = useState([]);
@@ -1156,6 +1318,16 @@ function ProviderRecord({ id, reload, actor, reach, standard }) {
           {d.credentials && <span style={{ fontFamily: MONO, fontSize: 11, color: C.muted }}>{d.credentials}</span>}
           {d.is_qme ? <span style={{ fontFamily: MONO, fontSize: 8.5, color: C.travel, background: C.travelBg, padding: "2px 5px" }}>QME</span> : null}
           <div style={{ flex: 1 }} />
+          {showOnMap && (() => {
+            const mapped = locs.some((l) => l.lat != null);
+            return (
+              <button onClick={() => mapped && showOnMap(d.id)} disabled={!mapped}
+                title={mapped ? "See this provider on the map, with nearby providers to compare" : "No mapped location yet — add a city or ZIP under Where they sit"}
+                style={{ ...btn, fontSize: 11, padding: "5px 11px", display: "inline-flex", alignItems: "center", gap: 6, opacity: mapped ? 1 : 0.4, cursor: mapped ? "pointer" : "not-allowed" }}>
+                <span aria-hidden="true">◎</span> View on map
+              </button>
+            );
+          })()}
           {d.preference && <span style={{ fontFamily: MONO, fontSize: 9, color: C.muted, border: `1px solid ${C.rule}`, padding: "2px 5px" }}>{d.preference}</span>}
         </div>
         <div style={{ display: "flex", gap: 7, alignItems: "center", marginTop: 5, flexWrap: "wrap" }}>
