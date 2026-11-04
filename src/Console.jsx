@@ -1303,11 +1303,11 @@ function LocationsPanel({ d, locs, act }) {
             <option value="office">Standing office</option>
             <option value="flyin">Fly-in / rented</option>
           </select>
-          <button disabled={!city.trim()} onClick={() => {
+          <button disabled={!city.trim() && !addr.trim()} onClick={() => {
             const zip = (addr.match(/\b(\d{5})\b/) || [])[1] || (/^\d{5}$/.test(city.trim()) ? city.trim() : null);
             act(() => api("POST", `/api/physicians/${d.id}/locations`, { address_line: addr.trim() || null, city: city.trim(), postal_code: zip, site_type: type }));
             setAddr(""); setCity("");
-          }} style={{ ...btn, opacity: city.trim() ? 1 : 0.4 }}>Add</button>
+          }} style={{ ...btn, opacity: (city.trim() || addr.trim()) ? 1 : 0.4 }}>Add</button>
         </div>
       </div>
     </Section>
@@ -1321,14 +1321,30 @@ function ContactsPanel({ d, contacts, act }) {
   const href = (m) => m.kind === "email" ? `mailto:${m.value_normalized || m.value}`
     : m.kind === "phone" || m.kind === "fax" ? `tel:${m.value_normalized || m.value}`
     : (m.value_normalized || m.value);
+  // What a person reads, not what's stored: (209) 942-1005, sanjoaquincardiology.org/adnan-khan-md
+  const shown = (m) => {
+    const v = String(m.value || "");
+    if (m.kind === "phone" || m.kind === "fax") {
+      const d = v.replace(/\D/g, "");
+      const ten = d.length === 11 && d[0] === "1" ? d.slice(1) : d;
+      return ten.length === 10 ? `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}` : v;
+    }
+    if (m.kind === "website" || m.kind === "portal") return v.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "");
+    return v;
+  };
   const Method = ({ m }) => (
-    <div style={{ display: "flex", gap: 6, alignItems: "baseline", padding: "2px 0" }}>
-      <span style={{ fontFamily: MONO, fontSize: 8, color: C.muted, width: 40, flexShrink: 0, textTransform: "uppercase" }}>{m.purpose === "general" ? m.kind : m.purpose}</span>
-      <a href={href(m)} target={m.kind === "website" ? "_blank" : undefined} rel="noreferrer"
-        style={{ fontSize: 11.5, color: C.ink, textDecoration: "none", borderBottom: `1px dotted ${C.rule}`, flex: 1, wordBreak: "break-all" }}>
-        {m.value}
+    <div style={{ display: "grid", gridTemplateColumns: "70px minmax(0,1fr) auto auto", columnGap: 8, alignItems: "baseline", padding: "3px 0" }}>
+      <span title={m.purpose === "general" ? m.kind : `${m.purpose} · ${m.kind}`}
+        style={{ fontFamily: MONO, fontSize: 8, letterSpacing: "0.04em", color: C.muted, textTransform: "uppercase",
+                 whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        {m.purpose === "general" ? m.kind : m.purpose}
+      </span>
+      <a href={href(m)} target={m.kind === "website" || m.kind === "portal" ? "_blank" : undefined} rel="noreferrer" title={m.value}
+        style={{ fontSize: 11.5, color: C.ink, textDecoration: "none", borderBottom: `1px dotted ${C.rule}`, minWidth: 0,
+                 overflowWrap: "anywhere", justifySelf: "start" }}>
+        {shown(m)}
       </a>
-      {m.is_primary ? <span style={{ fontFamily: MONO, fontSize: 7.5, color: C.owned }}>1°</span> : null}
+      <span title={m.is_primary ? "primary" : undefined} style={{ fontFamily: MONO, fontSize: 7.5, color: C.owned }}>{m.is_primary ? "1°" : ""}</span>
       {m.verified_at
         ? <span title={`verified by ${m.verified_by}`} style={{ color: C.owned, fontSize: 10 }}>✓</span>
         : <button onClick={() => act(() => api("PATCH", `/api/contacts/methods/${m.id}`, { verified: true }))}

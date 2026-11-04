@@ -84,6 +84,65 @@ const ZIP = (() => {
   });
   return m;
 })();
+// Places that aren't incorporated cities (Marina Del Rey) still have ZIPs.
+const ZIP_CITY = (() => {
+  const m = {};
+  for (const [z, v] of Object.entries(ZIP)) {
+    const k = (v.city || '').toLowerCase();
+    if (k && !m[k]) m[k] = { ...v, zip: z };
+  }
+  return m;
+})();
+
+/**
+ * Turn whatever someone typed into a point: "95240", "Lodi", "Glendale, CA",
+ * or a whole address like "1121 W. Vine St. Lodi, CA 95240 Suite 15".
+ * A ZIP wins (it's more precise than a city centroid); otherwise the last
+ * recognizable city name in the text. Returns null when nothing matches.
+ */
+function geocodeText(...parts) {
+  const text = parts.filter(Boolean).join(', ');
+  const zips = (text.match(/\b9[0-6]\d{3}\b/g) || []).filter((z) => ZIP[z]);
+  if (zips.length) {
+    const z = zips[zips.length - 1];   // the ZIP sits at the end of an address
+    return { lat: ZIP[z].lat, lng: ZIP[z].lng, source: 'zip_centroid', zip: z, city: ZIP[z].city };
+  }
+  const pieces = text.split(/[,;\n]/)
+    .map((s) => s.replace(/\b(CA|Calif\.?|California)\b/gi, '').replace(/\d{5}(-\d{4})?/g, '').trim())
+    .filter(Boolean).reverse();
+  for (const p of pieces) {
+    const k = p.toLowerCase();
+    if (CITY[k]) return { lat: CITY[k].lat, lng: CITY[k].lng, source: 'city_centroid', zip: null, city: CITY[k].name };
+    if (ZIP_CITY[k]) return { lat: ZIP_CITY[k].lat, lng: ZIP_CITY[k].lng, source: 'zip_centroid', zip: ZIP_CITY[k].zip, city: ZIP_CITY[k].city };
+  }
+  return null;
+}
+// A full street address typed into the city box, e.g. "1121 W. Vine St. Lodi, CA 95240".
+const looksLikeStreet = (s) => !!s && /\d/.test(s) && /[a-z]{3,}/i.test(s) && s.length > 15;
+
+/**
+ * One-time cleanup, safe to run on every boot: give un-located sites a pin.
+ * Only touches sites with NO coordinates, only fills fields in, never deletes,
+ * and never moves a site that is already on the map. Every change is audited.
+ */
+function repairUngeocodedSites() {
+  const rows = db.prepare('SELECT * FROM site WHERE lat IS NULL AND is_active = 1').all();
+  let fixed = 0;
+  for (const s of rows) {
+    const g = geocodeText(s.postal_code, s.address_line, s.city, s.label);
+    if (!g) continue;
+    const upd = { lat: g.lat, lng: g.lng, geocode_source: g.source };
+    if (g.zip && !s.postal_code) upd.postal_code = g.zip;
+    if (!s.address_line && looksLikeStreet(s.city)) { upd.address_line = s.city.trim(); upd.city = g.city || s.city; }
+    else if (g.city && s.city && s.city.toLowerCase() !== g.city.toLowerCase()
+             && s.city.toLowerCase().startsWith(g.city.toLowerCase())) upd.city = g.city;   // "Glendale, CA" -> "Glendale"
+    db.prepare(`UPDATE site SET ${Object.keys(upd).map((k) => `${k}=@${k}`).join(',')}, updated_at=datetime('now') WHERE id=@id`)
+      .run({ ...upd, id: s.id });
+    audit('site', s.id, 'update', 'system:address-repair', s, db.prepare('SELECT * FROM site WHERE id=?').get(s.id));
+    fixed++;
+  }
+  if (rows.length) console.log(`[repair] gave map pins to ${fixed} of ${rows.length} un-located addresses`);
+}
 
 // ---------------------------------------------------------------- reference
 app.get('/api/specialties', (_q, r) => r.json(db.prepare('SELECT * FROM specialty ORDER BY sort_order').all()));
@@ -219,15 +278,18 @@ app.delete('/api/physicians/:id', (req, res) => {
 
 // ---------------------------------------------------------------- locations
 app.post('/api/physicians/:id/locations', (req, res) => {
-  const b = req.body;
-  if (!b.city) return res.status(400).json({ error: 'city required' });
+  const b = { ...req.body };
+  b.city = b.city ? String(b.city).trim() : '';
+  b.address_line = b.address_line ? String(b.address_line).trim() : null;
+  if (!b.city && !b.address_line) return res.status(400).json({ error: 'a street address or a city/ZIP is required' });
+  // the whole address pasted into the city box -> treat it as the street line
+  if (!b.address_line && looksLikeStreet(b.city)) { b.address_line = b.city; b.city = ''; }
   let { lat, lng, geocode_source } = b;
-  if (lat == null) {
-    const isZip = /^\d{5}$/.test(b.city);
-    const hit = isZip ? ZIP[b.city] : CITY[String(b.city).toLowerCase()];
-    if (hit) { lat = hit.lat; lng = hit.lng; geocode_source = isZip ? 'zip_centroid' : 'city_centroid'; }
-  }
-  const city = /^\d{5}$/.test(b.city) ? (ZIP[b.city]?.city || b.city) : b.city;
+  const g = geocodeText(b.postal_code, b.city, b.address_line);
+  if (lat == null && g) { lat = g.lat; lng = g.lng; geocode_source = g.source; }
+  if (!b.postal_code && g?.zip) b.postal_code = g.zip;
+  const city = (/^\d{5}$/.test(b.city) || !b.city) ? (g?.city || b.city || b.address_line)
+             : (g?.city && b.city.toLowerCase().startsWith(g.city.toLowerCase()) ? g.city : b.city);
 
   // Reuse an existing place when the address matches. Never merge on city alone:
   // city centroids would fuse unrelated practices into one fictional office.
@@ -246,7 +308,7 @@ app.post('/api/physicians/:id/locations', (req, res) => {
   const link = db.prepare(`INSERT INTO physician_site (physician_id,site_id,site_type,confirmation_status,notes)
     VALUES (?,?,?,?,?) ON CONFLICT (physician_id,site_id) DO UPDATE SET is_active=1, site_type=excluded.site_type`)
     .run(req.params.id, siteId, b.site_type ?? 'office', b.confirmation_status ?? 'needs_confirm', b.notes ?? null);
-  const row = db.prepare(`SELECT ps.*, s.city, s.lat, s.lng, s.geocode_source FROM physician_site ps
+  const row = db.prepare(`SELECT ps.*, s.label, s.address_line, s.city, s.postal_code, s.lat, s.lng, s.geocode_source FROM physician_site ps
     JOIN site s ON s.id=ps.site_id WHERE ps.physician_id=? AND ps.site_id=?`).get(req.params.id, siteId);
   audit('physician_site', row.id, 'create', req.actor, null, row);
   res.status(201).json(row);
@@ -432,7 +494,10 @@ if (process.env.NODE_ENV !== 'test') {
   // the app still serves (an empty DB just means nobody can log in until fixed).
   app.listen(PORT, () => console.log(`IME network API -> http://localhost:${PORT}`));
   bootstrap()
-    .then(() => console.log('[bootstrap] complete'))
+    .then(() => {
+      console.log('[bootstrap] complete');
+      try { repairUngeocodedSites(); } catch (e) { console.error('[repair] skipped:', e.message); }
+    })
     .catch((e) => console.error('[bootstrap] FAILED (server still running):', e.message));
 }
 export default app;
