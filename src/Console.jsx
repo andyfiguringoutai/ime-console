@@ -1193,6 +1193,7 @@ function Providers({ providers, reload, actor, specs, reach, standard, openProvi
   const [sel, setSel] = useState(() => openProvider || null);
   // Arriving from the map: select that provider and clear the hand-off.
   useEffect(() => { if (openProvider) { setSel(openProvider); setOpenProvider(null); } }, [openProvider]);
+  const [adding, setAdding] = useState(false);
   const [q, setQ] = useState("");
   const [fCore, setFCore] = useState("all");
   const [fConf, setFConf] = useState("all");
@@ -1209,6 +1210,8 @@ function Providers({ providers, reload, actor, specs, reach, standard, openProvi
     <div style={{ display: "flex", gap: 0, border: `1px solid ${C.rule}`, background: C.surface, alignItems: "stretch", minHeight: 560 }}>
       <div style={{ width: 272, borderRight: `1px solid ${C.rule}`, display: "flex", flexDirection: "column", flexShrink: 0 }}>
         <div style={{ padding: 9, borderBottom: `1px solid ${C.ruleSoft}`, display: "flex", flexDirection: "column", gap: 6 }}>
+          <button onClick={() => setAdding(true)} aria-pressed={adding}
+            style={{ ...btn, width: "100%", padding: "8px 10px", fontSize: 12.5, opacity: adding ? 0.55 : 1 }}>+ Add provider</button>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${providers.length} providers`}
             style={{ ...inp, fontSize: 12, padding: "6px 8px" }} />
           <div style={{ display: "flex", gap: 5 }}>
@@ -1229,7 +1232,7 @@ function Providers({ providers, reload, actor, specs, reach, standard, openProvi
           {list.map((p) => {
             const on = p.id === sel;
             return (
-              <button key={p.id} onClick={() => setSel(p.id)} className="rowhover"
+              <button key={p.id} onClick={() => { setAdding(false); setSel(p.id); }} className="rowhover"
                 style={{ display: "block", width: "100%", textAlign: "left", background: on ? "#EAEEED" : "transparent",
                   border: "none", borderLeft: `2px solid ${on ? SPEC_TONE[p.core] : "transparent"}`,
                   borderBottom: `1px solid ${C.ruleSoft}`, padding: "8px 10px", cursor: "pointer" }}>
@@ -1256,8 +1259,142 @@ function Providers({ providers, reload, actor, specs, reach, standard, openProvi
         </div>
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        {sel ? <ProviderRecord key={sel} id={sel} reload={reload} actor={actor} reach={reach} standard={standard} showOnMap={showOnMap} />
+        {adding ? <AddProviderForm providers={providers} reload={reload}
+                    onCancel={() => setAdding(false)}
+                    onOpenExisting={(id) => { setAdding(false); setSel(id); }}
+                    onCreated={(id) => { setAdding(false); setQ(""); setFCore("all"); setFConf("all"); setSel(id); }} />
+          : sel ? <ProviderRecord key={sel} id={sel} reload={reload} actor={actor} reach={reach} standard={standard} showOnMap={showOnMap} />
              : <div style={{ padding: 40, color: C.muted, fontSize: 12.5 }}>Select a provider.</div>}
+      </div>
+    </div>
+  );
+}
+
+// Field label for the add-provider form. Lives at module level: defined inside the
+// form it would be a new component every render and inputs would lose focus.
+const FL = ({ children, w }) => <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 10, fontFamily: MONO, color: C.muted, textTransform: "uppercase", letterSpacing: "0.05em", flex: w || 1, minWidth: 0 }}>{children}</label>;
+
+/** New provider: the person, how to reach them, and (optionally) where they sit. */
+function AddProviderForm({ providers, reload, onCancel, onCreated, onOpenExisting }) {
+  const blank = { full_name: "", credentials: "", spec: "", specialty_detail: "", is_qme: false,
+                  phone: "", email: "", website: "", address: "", city: "", site_type: "office", notes: "" };
+  const [f, setF] = useState(blank);
+  const [specs, setSpecList] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [oops, setOops] = useState(null);
+  useEffect(() => { api("GET", "/api/specialties").then(setSpecList).catch(() => setSpecList([])); }, []);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
+
+  // "Dr. Jane Q. Smith, MD" and "jane smith" are the same person for duplicate purposes
+  const key = (n) => String(n || "").toLowerCase().replace(/\b(dr|md|m\.d|do|phd|ph\.d|psyd)\b\.?/g, "").replace(/[^a-z ]/g, " ").split(/\s+/).filter(Boolean);
+  const dupes = useMemo(() => {
+    const k = key(f.full_name);
+    if (k.length < 2) return [];
+    const first = k[0], last = k[k.length - 1];
+    return providers.filter((p) => { const pk = key(p.name.split(",")[0]); return pk.length && pk[pk.length - 1] === last && pk[0][0] === first[0]; }).slice(0, 3);
+  }, [f.full_name, providers]);
+
+  const save = async () => {
+    if (!f.full_name.trim()) return;
+    setBusy(true); setOops(null);
+    try {
+      const sp = specs.find((x) => x.code === f.spec);
+      const created = await api("POST", "/api/physicians", {
+        full_name: f.full_name.trim(), credentials: f.credentials.trim() || null,
+        primary_specialty_id: sp ? sp.id : null,
+        specialty_detail: f.specialty_detail.trim() || (sp ? sp.name : null),
+        is_qme: f.is_qme ? 1 : 0, notes: f.notes.trim() || null,
+      });
+      const id = created.id;
+      const steps = [];
+      if (f.phone.trim()) steps.push(api("POST", `/api/physicians/${id}/contacts/methods`, { kind: "phone", value: f.phone.trim(), purpose: "scheduling", is_primary: true }));
+      if (f.email.trim()) steps.push(api("POST", `/api/physicians/${id}/contacts/methods`, { kind: "email", value: f.email.trim(), purpose: "general", is_primary: true }));
+      if (f.website.trim()) steps.push(api("POST", `/api/physicians/${id}/contacts/methods`, { kind: "website", value: f.website.trim(), purpose: "general" }));
+      if (f.address.trim() || f.city.trim()) {
+        const zip = (f.address.match(/\b(\d{5})\b/) || [])[1] || (/^\d{5}$/.test(f.city.trim()) ? f.city.trim() : null);
+        steps.push(api("POST", `/api/physicians/${id}/locations`, { address_line: f.address.trim() || null, city: f.city.trim(), postal_code: zip, site_type: f.site_type }));
+      }
+      const results = await Promise.allSettled(steps);
+      await reload();
+      const failed = results.filter((r) => r.status === "rejected");
+      if (failed.length) alertLater(`Provider saved, but ${failed.length} detail${failed.length > 1 ? "s" : ""} didn't: ${failed.map((r) => r.reason && r.reason.message).join("; ")}`);
+      onCreated(id);
+    } catch (e) { setOops(e.message); setBusy(false); }
+  };
+  const alertLater = (msg) => { try { console.warn(msg); } catch (e) {} };
+
+  const field = { ...inp, fontSize: 12, padding: "6px 8px", fontFamily: SANS, textTransform: "none", letterSpacing: 0, color: C.ink };
+
+  return (
+    <div style={{ padding: "16px 18px 26px", opacity: busy ? 0.6 : 1, maxWidth: 720 }}>
+      <div style={{ display: "flex", alignItems: "baseline", marginBottom: 14 }}>
+        <h2 style={{ fontFamily: COND, fontSize: 24, fontWeight: 600, margin: 0, flex: 1 }}>Add a provider</h2>
+        <button onClick={onCancel} style={linkBtn}>cancel</button>
+      </div>
+      {oops && <div style={{ background: C.noneBg, color: C.none, padding: "7px 10px", fontSize: 11.5, marginBottom: 10 }}>{oops}</div>}
+
+      <Section title="Who">
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <FL w={2.2}>Full name *<input autoFocus value={f.full_name} onChange={set("full_name")} placeholder="e.g. Jane Q. Smith" style={field} /></FL>
+          <FL>Credentials<input value={f.credentials} onChange={set("credentials")} placeholder="M.D., Ph.D., Psy.D." style={field} /></FL>
+        </div>
+        {dupes.length > 0 && (
+          <div style={{ background: C.flagBg, borderLeft: `3px solid ${C.flag}`, padding: "7px 10px", fontSize: 11.5, marginBottom: 8 }}>
+            Possibly already in the list:{" "}
+            {dupes.map((p, i) => (
+              <span key={p.id}>{i > 0 && ", "}<button onClick={() => onOpenExisting(p.id)} style={{ ...linkBtn, fontSize: 11.5 }}>{p.name}</button></span>
+            ))}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          <FL>Specialty
+            <select value={f.spec} onChange={set("spec")} style={field}>
+              <option value="">Choose…</option>
+              {specs.map((x) => <option key={x.code} value={x.code}>{x.name}</option>)}
+            </select>
+          </FL>
+          <FL>Specialty detail<input value={f.specialty_detail} onChange={set("specialty_detail")} placeholder="e.g. Spine, Neuropsychology" style={field} /></FL>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, paddingBottom: 7, whiteSpace: "nowrap", cursor: "pointer" }}>
+            <input type="checkbox" checked={f.is_qme} onChange={set("is_qme")} style={{ accentColor: C.travel }} /> QME
+          </label>
+        </div>
+      </Section>
+
+      <Section title="How to reach them">
+        <div style={{ display: "flex", gap: 8 }}>
+          <FL>Scheduling phone<input value={f.phone} onChange={set("phone")} placeholder="(559) 555-1212" style={field} /></FL>
+          <FL>Email<input value={f.email} onChange={set("email")} placeholder="name@practice.com" style={field} /></FL>
+          <FL>Website<input value={f.website} onChange={set("website")} placeholder="practice.com" style={field} /></FL>
+        </div>
+        <div style={{ fontSize: 10.5, color: C.muted, marginTop: 5 }}>More people and numbers can be added on the record afterwards.</div>
+      </Section>
+
+      <Section title="Where they sit">
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <FL>Street address<input value={f.address} onChange={set("address")} placeholder="1234 Herndon Ave, Suite 200" style={field} /></FL>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+            <FL>City or ZIP — positions the map pin<input list="ca-places" value={f.city} onChange={set("city")} placeholder="Fresno or 93720" style={field} /></FL>
+            <FL w={0.7}>Type
+              <select value={f.site_type} onChange={set("site_type")} style={field}>
+                <option value="office">Standing office</option>
+                <option value="flyin">Fly-in / rented</option>
+              </select>
+            </FL>
+          </div>
+        </div>
+        <div style={{ fontSize: 10.5, color: C.muted, marginTop: 5 }}>Optional, but without a location this provider won't count toward coverage or appear on the map.</div>
+      </Section>
+
+      <Section title="Notes">
+        <textarea value={f.notes} onChange={set("notes")} rows={2} placeholder="How you found them, referral source, anything to confirm."
+          style={{ ...field, width: "100%", boxSizing: "border-box", resize: "vertical" }} />
+      </Section>
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+        <button onClick={save} disabled={!f.full_name.trim() || busy} style={{ ...btn, padding: "8px 16px", fontSize: 12.5, opacity: f.full_name.trim() && !busy ? 1 : 0.4 }}>
+          {busy ? "Saving…" : "Save provider"}
+        </button>
+        <button onClick={onCancel} style={{ ...btn, background: C.surface, color: C.ink, border: `1px solid ${C.rule}`, padding: "8px 14px", fontSize: 12.5 }}>Cancel</button>
       </div>
     </div>
   );
@@ -1304,7 +1441,7 @@ function ProviderRecord({ id, reload, actor, reach, standard, showOnMap }) {
     : confirmed === locs.length
     ? { tone: C.owned, bg: C.ownedBg, text: `${locs.length} site${locs.length > 1 ? "s" : ""} confirmed directly with the provider. Safe to claim.` }
     : confirmed === 0
-    ? { tone: C.flag, bg: C.flagBg, text: `${locs.length} site${locs.length > 1 ? "s" : ""}, none confirmed — inferred from the source export, never verified with the provider.` }
+    ? { tone: C.flag, bg: C.flagBg, text: `${locs.length} site${locs.length > 1 ? "s" : ""}, none confirmed — ${d.source_id ? "inferred from the source export" : "entered by hand"}, never verified with the provider.` }
     : { tone: C.flag, bg: C.flagBg, text: `${locs.length} sites, ${confirmed} confirmed. The remaining ${locs.length - confirmed} are inferred, not verified.` };
   trust.text += travelLine;
 
